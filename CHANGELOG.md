@@ -2,6 +2,16 @@
 
 All notable changes to the files in this repo are logged here, newest first.
 
+## April 20, 2026 (late evening)
+
+### `integration-notes.md` correction
+
+Fixed an incorrect framing of Meta's per-comment limits.
+
+**Changed.** The "One public comment reply per comment" section was rewritten to "One DM per comment."
+
+Prior text claimed Meta limits businesses to one public reply per comment. That's wrong. Meta limits one DM per comment through the comment-to-DM tools (error subcode 2534023 fires on the second DM attempt for the same comment ID). Public replies via `send_public_comment_reply` have no per-comment limit. Agents that don't track public replies will keep replying to the same comment every time a webhook event comes through for it.
+
 ## April 20, 2026 (evening)
 
 ### `playbook.md` rewrite

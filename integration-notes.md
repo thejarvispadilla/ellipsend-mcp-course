@@ -76,9 +76,11 @@ Filter by dropping any webhook where `sender_id` or `meta_contact_id` matches th
 
 Meta occasionally returns a `400 Bad Request` on a send while actually delivering the message. Don't retry on 400 blindly. Check whether the message landed (in the webhook stream or message history) before retrying. Blind retries produce duplicate sends.
 
-### One public comment reply per comment
+### One DM per comment
 
-Meta limits businesses to one public reply per comment (error subcode 2534023). If you've already replied publicly to a comment, don't try again. Track which comments you've publicly replied to.
+Meta limits businesses to one DM per comment through the comment-to-DM tools. If your agent tries to DM the same commenter twice for the same `comment_id` via `reply_to_comment_with_dm` or `reply_to_comment_with_dm_with_button`, Meta returns error subcode 2534023 on the second attempt. Track which comment IDs you've already DM'd and skip them.
+
+Public replies are different. `send_public_comment_reply` has no per-comment limit. Without tracking, an agent will keep publicly replying to the same comment every time a new webhook event comes through for it. Track public replies the same way you track DMs.
 
 ## Tool schemas
 
