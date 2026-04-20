@@ -1,13 +1,13 @@
-# Ellipsend MCP Course — Companion Repo
+# Ellipsend MCP Course Companion Repo
 
 This repo holds the files students hand to their AI tool (Claude Code, OpenClaw, Codex, or similar) as part of the Ellipsend MCP DIY Course.
 
 ## What's in here
 
-- **`kickoff-prompt.md`** — One-shot setup guide. Walks your AI tool through connecting to Ellipsend, building a local dashboard, and configuring your agent. Use once at the start.
-- **`playbook.md`** — Persistent runtime config. Your AI tool loads this every session. Defines behavior, escalation rules, and security guardrails.
-- **`integration-notes.md`** — Webhook subscription flow, workflow patterns, and Meta platform quirks your agent needs to handle.
-- **`CHANGELOG.md`** — What's changed in each version.
+- **`kickoff-prompt.md`**. One-shot setup guide. Walks your AI tool through connecting to Ellipsend, building a local dashboard, and configuring your agent. Use once at the start.
+- **`playbook.md`**. Persistent runtime config. Your AI tool loads this every session. Defines behavior, escalation rules, and security guardrails.
+- **`integration-notes.md`**. Webhook subscription flow, workflow patterns, and Meta platform quirks your agent needs to handle.
+- **`CHANGELOG.md`**. What's changed in each version.
 
 ## How to use this with your AI tool
 
