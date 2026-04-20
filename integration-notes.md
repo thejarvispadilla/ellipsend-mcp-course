@@ -1,19 +1,91 @@
 # Ellipsend Integration Notes
 
-*Version: pending rewrite*
+*Your AI tool consults this file when it needs webhook setup, workflow patterns, or Meta platform quirks. Not required per-session. Version history in `CHANGELOG.md`.*
 
-This file contains the things your AI tool needs to know that aren't in the MCP schema:
-
-- Webhook subscription endpoint and secret setup
-- Standard workflow: inbound DM handling
-- Standard workflow: comment-to-DM handling
-- Meta platform quirks (24h messaging window, 7-day CTD window, self-echo, rate limits)
-- Common gotchas on macOS (launchd TLS, dotenv override)
+---
 
 ## Why this file exists
 
-The MCP schema is self-describing. When your AI tool connects to `https://mcp.ellipsend.com/mcp/` it already sees every tool's name, description, input schema, and required fields. This file is not a mirror of that. It's the workflow context and platform quirks the schema can't communicate on its own.
+The Ellipsend MCP is self-describing. When your AI tool connects to `https://mcp.ellipsend.com/mcp/`, it already sees every tool's name, description, input schema, and required fields. That's the authoritative reference for what tools exist and what arguments each one takes.
 
-## Status
+This file covers workflow context and platform quirks the schema can't communicate on its own. For tool arguments, types, and constraints, use the MCP schema directly.
 
-Being rewritten based on debrief feedback from the Carl reference implementation (April 2026). Will be published here when ready.
+## Webhook subscription
+
+The webhook is a separate system from the MCP server. You subscribe by POSTing to `https://webhook.ellipsend.com/subscriptions` with your API key in the `x-api-key` header.
+
+Subscribe to `new_message`, `new_story_reply`, and `new_comment` events. They're mutually exclusive. A story reply won't also fire as a `new_message`. A `new_comment` fires only for comments. No duplicate delivery between types.
+
+Full subscription curl example lives in the kickoff prompt, Step 3.
+
+### Webhook security
+
+- **Secret verification.** When your endpoint receives a POST, verify the secret in the payload matches the one you registered. Reject any request without a valid secret. This blocks any traffic that isn't Ellipsend.
+- **Expose only the webhook path publicly.** Your dashboard and all other routes should stay private. Use path-based ingress (Cloudflare Tunnel, VPS reverse proxy, or your hosting platform's routing) to restrict public access to just `/api/webhook` or whichever path you configure. Everything else returns 404 from the public internet.
+
+## Standard workflow: DMs
+
+When a `new_message` or `new_story_reply` webhook arrives:
+
+1. Receive the webhook payload (message content, `meta_contact_id`, contact metadata).
+2. Read the contact via `ellipsend://contacts/{contact_id}` to check current relationship and labels.
+3. Read conversation history via `ellipsend://contacts/{contact_id}/messages/{page}/{page_size}` for context.
+4. Decide how to respond based on the playbook and your business configuration.
+5. Reply with `send_dm` or `send_dm_with_button`.
+6. Update the contact's relationship or label with `set_contact_relationship` or `set_contact_label` if appropriate.
+
+## Standard workflow: comment-triggered DMs
+
+When a `new_comment` webhook arrives:
+
+1. Receive the webhook payload (comment text, `comment_id`, `post_id`, commenter metadata).
+2. Skip if you've already handled this `comment_id`. Track responded comment IDs.
+3. Read the post via `ellipsend://posts/{post_id}` to understand its topic and caption.
+4. Read the commenter's contact and any prior conversation history.
+5. Decide whether to respond based on the playbook rules.
+6. If responding, reply with `reply_to_comment_with_dm` or `reply_to_comment_with_dm_with_button`. These tools link the DM to the specific comment, which is required by Meta. Don't use regular `send_dm` for comment-triggered responses.
+7. Optionally call `send_public_comment_reply` to post a public reply to the comment as well.
+
+## Debounce
+
+When multiple messages arrive in quick succession, don't respond immediately. Wait for a 10-second silence window before processing. Then treat all new messages as one context and send one coherent reply. Without debounce, you'll reply mid-thought and miss context from the follow-up messages.
+
+Do not add a per-contact cooldown after sending. Older versions of this file included a 60-second cooldown. It caused real substantive follow-ups to get dropped. Debounce on incoming messages alone handles the rapid-fire case.
+
+## Meta platform quirks
+
+Platform behaviors that look like bugs but trace back to Meta's API rules. Name them, handle them, move on.
+
+### 24-hour messaging window
+
+Meta only allows a business to DM a contact via the standard Messaging API if the contact has messaged the business in the last 24 hours. Outside that window, `send_dm` and `send_dm_with_button` will fail.
+
+Ellipsend's server-side guardrails block the call before it leaves the platform, so your Meta account stays protected from policy strikes. You'll see a clean error your agent can react to (flag for the operator, queue outreach via comment-to-DM when they next comment, etc.).
+
+### 7-day CTD window
+
+Comment-to-DM tools (`reply_to_comment_with_dm`, `reply_to_comment_with_dm_with_button`) have a separate 7-day window. You can DM a commenter up to 7 days after they commented, even if the standard 24-hour messaging window with them is closed. This is what makes comment tools powerful for reactivation.
+
+### Self-echo
+
+When you post a public comment reply, Instagram delivers that reply back to the business as a `new_comment` webhook (because the business is "the one who posted the comment"). If you don't filter these out, your agent tries to process its own replies as if they came from a contact.
+
+Filter by dropping any webhook where `sender_id` or `meta_contact_id` matches the business Meta ID. Store the business Meta ID in `.env` as `BUSINESS_META_ID` and check it at the handler.
+
+### 400-that-delivered
+
+Meta occasionally returns a `400 Bad Request` on a send while actually delivering the message. Don't retry on 400 blindly. Check whether the message landed (in the webhook stream or message history) before retrying. Blind retries produce duplicate sends.
+
+### One public comment reply per comment
+
+Meta limits businesses to one public reply per comment (error subcode 2534023). If you've already replied publicly to a comment, don't try again. Track which comments you've publicly replied to.
+
+## Tool schemas
+
+Don't reproduce the MCP schema in this file. It will go stale.
+
+Connect to `https://mcp.ellipsend.com/mcp/` and list tools to see everything available. New tools and resources are added over time. If the schema defines a tool not mentioned in this file, use it as its schema describes. The schema covers:
+
+- Required and optional arguments
+- Argument types and formats
+- Any per-tool constraints (like the 24-hour window on `send_dm`)

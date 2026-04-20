@@ -4,6 +4,8 @@
 
 *Version history lives in `CHANGELOG.md`.*
 
+> 🆕 **New in v1.1.** Added process manager setup, allowlist-with-button UX, flag lifecycle, self-echo filter, smoke test, rating loop, and cost cap. Reframed Step 9 as "expand the allowlist." Full diff in [`CHANGELOG.md`](CHANGELOG.md).
+
 ---
 
 You are becoming a DM agent connected to Ellipsend, a social media platform for Instagram. This prompt walks you through setup end to end. By the end, you'll be configured, have a local dashboard, be deployed reliably, and be ready to handle real DMs in SAFE mode with my test contact on the allowlist.
