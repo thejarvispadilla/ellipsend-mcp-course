@@ -2,6 +2,45 @@
 
 All notable changes to the files in this repo are logged here, newest first.
 
+## April 21, 2026
+
+### `kickoff-prompt.md` v1.2
+
+Launch-mode and webhook-coverage rework based on operator feedback and webhook-event testing.
+
+**Added.**
+
+- `new_button_clicked` is now part of the webhook subscription in Step 3. Without it, your agent is deaf to button and quick-reply taps, which breaks any coordination with DM automations. Agent webhook handler now needs a branch for all four event types.
+- Step 1 now asks whether you run DM automations in Ellipsend. Context gets saved so the handoff rule can be configured in Step 6.
+- Step 6 has a new "Exclusion rules" subsection for defining categories of contacts the agent should stay out of (relationships, labels, any metadata the operator wants to use).
+- Step 6 has a new "Automation handoff" subsection for describing where in each DM automation the agent should take over. Plain-English descriptions that get applied at runtime against conversation history.
+- Dashboard now includes an exclude-list table with an **Exclude** button on every Inbox row, alongside the existing **Add to Allowlist** button.
+- Synthetic smoke test (Step 7) now verifies both SAFE and ON behavior plus that button-click events route correctly.
+
+**Rewritten.**
+
+- Step 9 reframed from "Expand the Allowlist" to "Go Live," with SAFE and ON presented as two valid steady-state modes. SAFE is allowlist-driven for cautious or high-stakes launches. ON is exclusion-driven for higher-volume or automation-heavy setups. Neither is positioned as the "real" goal over the other.
+- Autopilot descriptions in Step 5 updated to reflect the parallel modes.
+
+### `integration-notes.md` updates
+
+**Added.**
+
+- `new_button_clicked` now documented in the subscription list with its payload shape.
+- New "Event type payload shapes" section covering `new_message`, `new_story_reply`, `new_comment`, and `new_button_clicked`. Button taps and quick-reply taps have inverted `message_id` / `message_text` shapes — button taps have the label in `message_text` with empty `message_id`; quick-reply taps have populated `message_id` with empty `message_text`.
+- New "Standard workflow: button-click events" section. Button clicks are automation-flow signals, not agent response triggers.
+- Debounce section notes that button clicks are not part of the debounce window for response purposes.
+- Standard DM workflow now includes an explicit step to run the playbook's decision-to-respond logic before generating a response.
+
+**Note on identifiers.** Button events have empty `message_id`, so any dedupe or flag tracking keyed on `message_id` will break. Use `event_id` from the top-level webhook payload, or a composite key for button events specifically.
+
+### `playbook.md` updates
+
+**Added.**
+
+- New "Deciding Whether to Respond" section with a 7-step ordered decision: event type, self-echo, autopilot mode, exclusion rules, automation handoff, fetch history, generate. Every skipped event must log a reason to the activity feed.
+- New "Automation Handoff" section defining the runtime logic for coordinating with DM automations. Operator describes the handoff in plain English; agent compares conversation history against that description on every `new_message` event. Button and quick-reply events are always automation-flow signals, never handoff moments.
+
 ## April 20, 2026 (late evening)
 
 ### `integration-notes.md` correction

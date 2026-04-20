@@ -14,7 +14,12 @@ This file covers workflow context and platform quirks the schema can't communica
 
 The webhook is a separate system from the MCP server. You subscribe by POSTing to `https://webhook.ellipsend.com/subscriptions` with your API key in the `x-api-key` header.
 
-Subscribe to `new_message`, `new_story_reply`, and `new_comment` events. They're mutually exclusive. A story reply won't also fire as a `new_message`. A `new_comment` fires only for comments. No duplicate delivery between types.
+Subscribe to all four event types:
+
+- `new_message` — organic typed DMs.
+- `new_story_reply` — replies to your Instagram stories.
+- `new_comment` — comments on your posts.
+- `new_button_clicked` — quick-reply taps and message-button clicks. Without this, your agent is deaf to button interactions.
 
 Full subscription curl example lives in the kickoff prompt, Step 3.
 
@@ -23,6 +28,33 @@ Full subscription curl example lives in the kickoff prompt, Step 3.
 - **Secret verification.** When your endpoint receives a POST, verify the secret in the payload matches the one you registered. Reject any request without a valid secret. This blocks any traffic that isn't Ellipsend.
 - **Expose only the webhook path publicly.** Your dashboard and all other routes should stay private. Use path-based ingress (Cloudflare Tunnel, VPS reverse proxy, or your hosting platform's routing) to restrict public access to just `/api/webhook` or whichever path you configure. Everything else returns 404 from the public internet.
 
+## Event type payload shapes
+
+The payload shape differs across event types. Your webhook handler needs a branch for each.
+
+### `new_message` and `new_story_reply`
+
+Organic typed content. `message_type: "message"`. The `message_text` field contains what the user typed. `message_id` is populated.
+
+These are the events where your agent usually decides whether to respond.
+
+### `new_comment`
+
+A comment on one of your posts. Payload includes `comment_id`, `post_id`, comment text, and commenter metadata. See the comment-triggered DM workflow below.
+
+### `new_button_clicked`
+
+Fires when a contact taps a button or quick-reply option inside a DM conversation. Delivered with `message_type: "postback"`.
+
+Two variants with different payload shapes:
+
+- **Button tap.** `message_id` is empty string. `message_text` contains the button label (for example, `"Testing Button"`).
+- **Quick-reply tap.** `message_id` is populated. `message_text` is empty string.
+
+Either way, these events signal that the user is interacting with an in-progress DM automation (a flow that ends in a button prompt, a sequence that uses quick replies to guide the user through a tree). For automation handoff logic, treat `new_button_clicked` events as "user is still in the automation, not a handoff moment." See the playbook's Automation handoff section for the full rule.
+
+Don't key your message dedupe or flag tracking on `message_id` for button events. Empty string collisions across multiple button taps will break that logic. Use `event_id` from the top-level webhook payload instead, or a composite of `meta_contact_id + occurred_at` for button events specifically.
+
 ## Standard workflow: DMs
 
 When a `new_message` or `new_story_reply` webhook arrives:
@@ -30,9 +62,19 @@ When a `new_message` or `new_story_reply` webhook arrives:
 1. Receive the webhook payload (message content, `meta_contact_id`, contact metadata).
 2. Read the contact via `ellipsend://contacts/{contact_id}` to check current relationship and labels.
 3. Read conversation history via `ellipsend://contacts/{contact_id}/messages/{page}/{page_size}` for context.
-4. Decide how to respond based on the playbook and your business configuration.
-5. Reply with `send_dm` or `send_dm_with_button`.
-6. Update the contact's relationship or label with `set_contact_relationship` or `set_contact_label` if appropriate.
+4. Check the playbook's decision-to-respond logic: exclusion rules, allowlist/exclude-list, automation handoff. If any of them say skip, log and stop.
+5. Decide how to respond based on the playbook and your business configuration.
+6. Reply with `send_dm` or `send_dm_with_button`.
+7. Update the contact's relationship or label with `set_contact_relationship` or `set_contact_label` if appropriate.
+
+## Standard workflow: button-click events
+
+When a `new_button_clicked` webhook arrives:
+
+1. Receive the webhook payload (`message_type: "postback"`, either a button label or a quick-reply with populated `message_id`).
+2. Log the event so it shows in the activity feed and is visible in conversation history later.
+3. Check whether the operator configured automation handoff. If yes, treat this event as "user is still in the automation" and do not respond. The handoff moment is the subsequent organic `new_message` event, not this button tap.
+4. If the operator did not configure automation handoff (no automations in their setup), the event can still be recorded to history but should not trigger an agent response on its own. Button clicks are flow interactions, not DM questions.
 
 ## Standard workflow: comment-triggered DMs
 
@@ -40,7 +82,7 @@ When a `new_comment` webhook arrives:
 
 1. Receive the webhook payload (comment text, `comment_id`, `post_id`, commenter metadata).
 2. Skip if you've already handled this `comment_id`. Track responded comment IDs.
-3. Read the post via `ellipsend://posts/{post_id}` to understand its topic and caption.
+3. Read the post via `ellipsend://posts/{post_id}` to understand what the post is about.
 4. Read the commenter's contact and any prior conversation history.
 5. Decide whether to respond based on the playbook rules.
 6. If responding, reply with `reply_to_comment_with_dm` or `reply_to_comment_with_dm_with_button`. These tools link the DM to the specific comment, which is required by Meta. Don't use regular `send_dm` for comment-triggered responses.
@@ -49,6 +91,8 @@ When a `new_comment` webhook arrives:
 ## Debounce
 
 When multiple messages arrive in quick succession, don't respond immediately. Wait for a 10-second silence window before processing. Then treat all new messages as one context and send one coherent reply. Without debounce, you'll reply mid-thought and miss context from the follow-up messages.
+
+Debounce applies to `new_message` events only. `new_button_clicked` events are automation-flow signals, not organic messages, so they don't accumulate in the debounce window for response purposes.
 
 Do not add a per-contact cooldown after sending. Older versions of this file included a 60-second cooldown. It caused real substantive follow-ups to get dropped. Debounce on incoming messages alone handles the rapid-fire case.
 
