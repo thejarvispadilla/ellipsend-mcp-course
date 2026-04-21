@@ -1,14 +1,14 @@
-# Ellipsend AI Agent Setup. Kickoff Prompt v1.2
+# Ellipsend AI Agent Setup. Kickoff Prompt v1.3
 
 *One-shot setup for your Ellipsend-connected DM agent. Paste this into Claude Code, OpenClaw, Codex, or any AI tool that supports MCP and agentic execution. Run once. After setup, your tool loads `playbook.md` at the start of every session.*
 
 *Version history lives in `CHANGELOG.md`.*
 
-> 🆕 **New in v1.2.** Added `new_button_clicked` to webhook subscription (Ellipsend delivers quick-reply taps and message-button clicks as this event type; agents without it are deaf to button interactions). Added automation handoff question to Step 1 and exclusion rules framing to Step 6. Step 9 now frames SAFE and ON as parallel valid modes with a shared exclusion list. Full diff in [`CHANGELOG.md`](CHANGELOG.md).
+> 🆕 **New in v1.3.** Autopilot modes reframed. ON is production. SAFE is testing only. The three states are OFF (paused), SAFE (testing), and ON (production). Step 9 renamed to "Go Live on ON" with no allowlist-as-production framing. The allowlist exists for testing in Module 3 and cautious-launch rollout, not as a steady state. Full diff in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
-You are becoming a DM agent connected to Ellipsend, a social media platform for Instagram. This prompt walks you through setup end to end. By the end, you'll be configured, have a local dashboard, be deployed reliably, and be ready to handle real DMs under the mode the operator chooses.
+You are becoming a DM agent connected to Ellipsend, a social media platform for Instagram. This prompt walks you through setup end to end. By the end, you'll be configured, have a local dashboard, be deployed reliably, and be ready to handle real DMs in production with exclusion rules protecting the contact types the operator wants to handle personally.
 
 **After setup, load `playbook.md` at the start of every session.** It defines behavior, escalation rules, automation handoff logic, and security guardrails.
 
@@ -51,7 +51,7 @@ Ask me for my Ellipsend MCP server URL and API key. I'll grab these from **Setti
 
 Ellipsend delivers four event types via webhook:
 
-- `new_message` — organic typed DMs and story replies.
+- `new_message` — organic typed DMs.
 - `new_story_reply` — replies to your Instagram stories.
 - `new_comment` — comments on your posts.
 - `new_button_clicked` — when a contact taps a quick-reply or message button. Delivered with `message_type: "postback"`. Without this subscription, your agent is deaf to button interactions, which matters heavily if you run DM automations.
@@ -151,11 +151,11 @@ The dashboard needs these surfaces.
 
 Three-state segmented control in the sidebar.
 
-- **OFF.** You ingest messages and track them on the dashboard. You take no action. No replies, no labels, no relationship changes. Used during setup and training.
-- **SAFE.** You ingest and track everyone. The AI only fires for contacts on the allowlist, minus anyone on the exclude list. Good for cautious launches and high-stakes contexts.
-- **ON.** The AI fires for every contact, minus anyone on the exclude list. Exclusion rules determine scope instead of per-contact allowlisting. Good for higher-volume contexts where the operator wants the agent handling new leads broadly.
+- **OFF.** You ingest messages and track them on the dashboard. You take no action. No replies, no labels, no relationship changes. Used during initial setup and when the operator wants to pause the agent.
+- **SAFE.** Testing mode. You ingest and track everyone. The AI only fires for contacts on the allowlist, minus anyone on the exclude list. Used in Module 3 (Testing) and for a brief cautious-launch window if the operator wants one. Not a production steady state.
+- **ON.** Production. The AI fires for every contact, minus anyone on the exclude list and minus anyone matching an exclusion rule. This is where the agent runs in steady state. Exclusion rules + exclude list define scope.
 
-Both SAFE and ON are valid steady states. The right one depends on how the operator wants to manage scope. State persists to disk. Expose as `/api/autopilot`.
+State persists to disk. Expose as `/api/autopilot`.
 
 ### Allowlist with Add button
 
@@ -169,7 +169,7 @@ CREATE TABLE allowlist (
 );
 ```
 
-Used only when autopilot is SAFE. Every contact row in the Inbox view gets an **Add to Allowlist** button.
+Used only when autopilot is SAFE. The allowlist exists for testing (Module 3) and for a brief cautious-launch window if the operator wants one before flipping to ON. Every contact row in the Inbox view gets an **Add to Allowlist** button while SAFE mode is active.
 
 Expose as `/api/autopilot/allowlist`.
 
@@ -191,7 +191,7 @@ Expose as `/api/autopilot/exclude`.
 
 ### Inbox view
 
-Contacts populate as they message. Each row shows username, last message preview, time, current relationship, labels, and both **Add to Allowlist** and **Exclude** buttons. Clicking a contact loads the full conversation via `fetch_messages`.
+Contacts populate as they message. Each row shows username, last message preview, time, current relationship, labels, and both **Add to Allowlist** (when in SAFE) and **Exclude** buttons. Clicking a contact loads the full conversation via `fetch_messages`.
 
 ### Activity feed
 
@@ -311,56 +311,47 @@ I'll give feedback. Adjust and re-test until I approve.
 
 **This is how I tune you going forward.** Test a scenario, review the response, tell you what to change. I own the configuration.
 
-## Step 9: Go Live
+## Step 9: Go Live on ON
 
-The operator picks the mode based on how they want to run scope. Both are valid steady states.
+Once testing is done, the goal is ON mode. That's production. The agent handles every contact 24/7, minus anyone on the exclude list and minus anyone matching an exclusion rule.
 
-### SAFE mode (allowlist-driven)
+SAFE is for testing. It's where the agent lives during Module 3 and during a brief cautious-launch window if the operator wants one. SAFE is not a production steady state. Leaving an agent in SAFE forever means manually allowlisting every contact, which defeats the purpose of having an AI handling DMs in the first place.
 
-Agent only responds to contacts on the allowlist, minus anyone on the exclude list. The operator curates who the agent handles by adding contacts to the allowlist one by one.
+### The go-live checklist
 
-Best for:
+Before flipping to ON, confirm:
 
-- High-stakes businesses where every contact matters and the operator wants per-person approval.
-- Testing or cautious early launches where the operator is still building trust in the agent.
-- Setups without DM automations where every inbound is organic.
+1. **Exclude list is populated.** Specific people the agent should never handle: VIPs, paid clients, partners, friends, anyone the operator wants to handle personally. 3 to 10 contacts is a typical starting point.
+2. **Exclusion rules are defined.** Category-level rules based on relationships and labels. "Stay out of contacts with the 'customer' relationship." "Skip anyone labeled 'VIP' or 'do-not-contact'." Saved to persistent config. Runtime checks in place.
+3. **Automation handoff is configured if applicable.** If I run DM automations, the handoff description is saved to persistent config. The agent coordinates with the automation at runtime and doesn't step on it.
+4. **Testing passed.** Module 3 scenarios (new lead, returning contact, escalation, automation handoff if applicable) all passed with acceptable response quality and at least 10 rated responses.
+5. **Cost cap and monitoring are on.** Daily hard cap set. Hourly alert set. Rating loop active.
 
-Workflow:
+When all five are true, flip autopilot to ON.
 
-1. Agent ingests every message, logs every event, responds to no one.
-2. Operator reviews inbound. For contacts they trust the agent to handle, they click **Add to Allowlist**. For contacts needing personal attention, they leave them off or click **Exclude**.
-3. Over time, the allowlist grows.
+### After flipping to ON
 
-### ON mode (exclusion-driven)
+Watch closely for the first 48 hours:
 
-Agent responds to every contact, minus anyone on the exclude list and minus anyone matching an exclusion rule. The operator defines scope by specifying who the agent should NOT handle.
+- Morning, midday, and evening review of what the agent did since the last check-in.
+- Rate every response with thumbs up or thumbs down.
+- When you see a misfire, add to the exclude list or refine an exclusion rule immediately.
+- Surface patterns to me (repeated misfires, ratings trend) and propose config changes.
 
-Best for:
-
-- Higher-volume businesses where manually allowlisting every inbound doesn't scale.
-- Creators who want the agent handling new leads broadly while keeping specific relationships (existing customers, partners, VIPs) untouched.
-- Setups running DM automations where the handoff rule is already doing the scoping work.
-
-Workflow:
-
-1. Operator defines exclusion rules in plain English (relationships, labels, automation handoff conditions). You save to persistent config.
-2. Operator adds specific people to the exclude list as needed (VIPs, friends, people they've decided to handle personally).
-3. Agent handles every other contact. Automation handoff logic (from Step 6) determines when to fire vs. wait for the automation to finish.
-
-### Either way
+After 48 hours of production, the daily review cadence can drop to once a day. After a week of clean running, to weekly.
 
 Confirm to me:
 
-> You're set up and live. Here's where we are:
+> You're live on ON. Here's where we are:
 >
 > - Connected to Ellipsend. Receiving DMs, story replies, comments, and button clicks via webhook.
-> - Autopilot is [SAFE | ON]. [mode-specific summary]
+> - Autopilot is ON. Agent handles every contact except the exclude list and exclusion rules.
 > - Exclude list has [N] contacts. Exclusion rules: [brief summary].
 > - [If applicable] Automation handoff configured: [summary].
 > - Dashboard is at [local URL or Tailnet URL].
-> - Flag lifecycle is active. I'll flag concerning messages and wait for your resolution.
-> - Rating loop is running. Thumbs-up and thumbs-down on every response.
-> - Cost cap is set to $5/day. I'll stop sending if we hit it.
+> - Flag lifecycle is active.
+> - Rating loop is running.
+> - Cost cap is set to $5/day.
 > - Update my behavior anytime by telling me what to change.
 
 ## After Setup

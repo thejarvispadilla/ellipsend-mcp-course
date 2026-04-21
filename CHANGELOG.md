@@ -2,6 +2,23 @@
 
 All notable changes to the files in this repo are logged here, newest first.
 
+## April 21, 2026 (afternoon)
+
+### `kickoff-prompt.md` v1.3
+
+Autopilot mode framing corrected. The v1.2 framing presented SAFE and ON as parallel steady-state modes, which doesn't match the intended product use. Corrected to:
+
+- **OFF.** Paused. Setup only.
+- **SAFE.** Testing only. Used in Module 3 and during a brief cautious-launch window.
+- **ON.** Production. The steady state for every operator.
+
+**Rewritten.**
+
+- Step 5 autopilot descriptions no longer call SAFE a steady state.
+- Step 9 renamed from "Go Live" to "Go Live on ON." The "two valid modes" framing is gone. SAFE is explicitly positioned as testing and cautious-launch, not a production endpoint. Go-live checklist covers the five preconditions for flipping to ON. After-flip section covers the first 48-hour review cadence.
+- Allowlist description in Step 5 now frames the allowlist as a testing and cautious-launch tool, not a production gate.
+- v1.2 callout at the top replaced with v1.3 callout summarizing the mode-framing correction.
+
 ## April 21, 2026
 
 ### `kickoff-prompt.md` v1.2
@@ -19,8 +36,8 @@ Launch-mode and webhook-coverage rework based on operator feedback and webhook-e
 
 **Rewritten.**
 
-- Step 9 reframed from "Expand the Allowlist" to "Go Live," with SAFE and ON presented as two valid steady-state modes. SAFE is allowlist-driven for cautious or high-stakes launches. ON is exclusion-driven for higher-volume or automation-heavy setups. Neither is positioned as the "real" goal over the other.
-- Autopilot descriptions in Step 5 updated to reflect the parallel modes.
+- Step 9 reframed from "Expand the Allowlist" to "Go Live," with SAFE and ON presented as two valid steady-state modes. SAFE is allowlist-driven for cautious or high-stakes launches. ON is exclusion-driven for higher-volume or automation-heavy setups. Neither is positioned as the "real" goal over the other. *(Corrected in v1.3: SAFE is not a steady state.)*
+- Autopilot descriptions in Step 5 updated to reflect the parallel modes. *(Corrected in v1.3.)*
 
 ### `integration-notes.md` updates
 
