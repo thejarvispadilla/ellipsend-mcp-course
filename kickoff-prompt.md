@@ -1,10 +1,10 @@
-# Ellipsend AI Agent Setup. Kickoff Prompt v1.3
+# Ellipsend AI Agent Setup. Kickoff Prompt v1.4
 
 *One-shot setup for your Ellipsend-connected DM agent. Paste this into Claude Code, OpenClaw, Codex, or any AI tool that supports MCP and agentic execution. Run once. After setup, your tool loads `playbook.md` at the start of every session.*
 
 *Version history lives in `CHANGELOG.md`.*
 
-> 🆕 **New in v1.3.** Autopilot modes reframed. ON is production. SAFE is testing only. The three states are OFF (paused), SAFE (testing), and ON (production). Step 9 renamed to "Go Live on ON" with no allowlist-as-production framing. The allowlist exists for testing in Module 3 and cautious-launch rollout, not as a steady state. Full diff in [`CHANGELOG.md`](CHANGELOG.md).
+> 🆕 **New in v1.4.** Button-click handling corrected. `new_button_clicked` events are handoff candidates, same as `new_message` events. The operator's handoff rule decides whether to respond, not the event type. Default when no handoff rule is configured: respond to both event types. Full diff in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
@@ -245,11 +245,17 @@ Save these rules to persistent config. Before every response, check the contact'
 
 If I told you in Step 1 that I run DM automations, ask me now: where in each automation do I want you to take over?
 
-I'll describe it in plain English, the way I'd brief a human employee. Something like, "My automation sends my free guide and asks where they're based. Wait until they reply to the 'where are you based' question. That's when you take over."
+I'll describe it in plain English, the way I'd brief a human employee. A few shapes this can take:
 
-You then apply this logic at runtime. On every `new_message` event, fetch conversation history via `fetch_messages`. Read the last outbound message I sent (or that the automation sent) and the user's latest reply. Decide whether this looks like the handoff moment I described. If yes, respond. If not (for example, the automation is still in the middle of its flow), skip and log.
+- *"My automation sends my free guide and asks where they're based. Wait until they reply to the 'where are you based' question. That's when you take over."*
+- *"My welcome automation shows a button that says 'Tell me more.' When they tap that button, that's you coming in."*
+- *"My automation ends with a quick reply asking them to pick a topic. When they pick one, you take over."*
 
-Button taps and quick-reply selections come through as `new_button_clicked` events, not `new_message` events. See `playbook.md` and `integration-notes.md` for the rule. The short version: treat `new_button_clicked` events as automation-flow signals, not handoff moments. They confirm the user is still working through the automation.
+You then apply this logic at runtime. On every inbound event (`new_message` or `new_button_clicked`), fetch conversation history via `fetch_messages`. Read the last outbound message I sent (or that the automation sent) and the user's latest interaction. Decide whether this looks like the handoff moment I described. If yes, respond. If not (for example, the automation is still in the middle of its flow), skip and log.
+
+The event type doesn't determine behavior on its own. My handoff rule does. A button click can be the handoff moment if that's what I described. An organic typed reply can be mid-automation and should be skipped if my rule says to wait for something specific.
+
+Default behavior when no handoff rule is configured: respond to both `new_message` and `new_button_clicked` events as if they're organic messages. This means if I have DM automations running but I haven't configured a handoff rule, you may step on my automation. Configuring the handoff is how I prevent that. The course's Module 2 surfaces my automations early so I know to configure this here.
 
 ### Flag lifecycle
 
@@ -264,7 +270,9 @@ Without this, a single concerning message in history keeps firing escalations on
 
 ### Debounce, no cooldown
 
-10-second silence window before processing a batch. If a contact sends three messages in five seconds, wait for silence, then process as one context.
+10-second silence window before processing a batch of inbound `new_message` events. If a contact sends three messages in five seconds, wait for silence, then process as one context.
+
+Button clicks and quick-reply taps (`new_button_clicked`) are processed immediately without debounce batching. They typically arrive as discrete single interactions.
 
 Do not add a per-contact cooldown after sending. Older versions of this prompt included a 60-second cooldown. Substantive follow-ups within that window get dropped. Debounce alone handles the rapid-fire case. Cooldown causes more harm than help.
 
@@ -285,7 +293,7 @@ Verify:
 5. In SAFE mode with the contact not on the allowlist, the AI is skipped and the skip is logged.
 6. In ON mode with the contact NOT on the exclude list, the AI fires.
 7. In ON mode with the contact on the exclude list, the AI is skipped and the skip is logged.
-8. A synthetic `new_button_clicked` event is routed to your postback handler and treated as automation-flow (no response generated).
+8. A synthetic `new_button_clicked` event is routed to your postback handler and evaluated against the handoff rule (or responded to as default if no rule is configured).
 
 If any of these fail, diagnose before moving to real testing.
 
@@ -305,7 +313,7 @@ Then walk me through three scenarios with the test contact:
 
 If I run DM automations, run a fourth scenario:
 
-4. **Automation handoff.** I trigger my automation from the test account (comment the trigger word, click the button, whatever starts the flow). You receive the `new_button_clicked` events and log them as automation-flow. When my automation asks a question and the test account answers organically (a `new_message` event), you recognize the handoff and respond.
+4. **Automation handoff.** I trigger my automation from the test account (comment the trigger word, click the button, whatever starts the flow). You receive the `new_button_clicked` events and evaluate them against my handoff rule. If my rule says the button click is the handoff, you respond. If my rule says to wait for a typed answer to a later question, you log and skip the button clicks, then respond when the typed handoff arrives.
 
 I'll give feedback. Adjust and re-test until I approve.
 

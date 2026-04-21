@@ -2,6 +2,35 @@
 
 All notable changes to the files in this repo are logged here, newest first.
 
+## April 21, 2026 (late afternoon)
+
+### `kickoff-prompt.md` v1.4
+
+Button-click semantics corrected. The v1.2 and v1.3 framing said `new_button_clicked` events should always be skipped and treated as automation-flow signals, never handoff moments. That's wrong. A button tap can be the handoff moment if the operator described it that way (for example, "when they tap the 'Tell me more' button, that's you taking over").
+
+**Corrected rule.** Both `new_message` and `new_button_clicked` events are handoff candidates. The operator's handoff description decides which specific event in a conversation is the handoff moment. Default when no handoff rule is configured: respond to both event types.
+
+**Rewritten.**
+
+- Step 6 Automation handoff subsection. Removed the "treat button clicks as automation-flow signals, never handoff moments" blanket rule. Added three example handoff descriptions (typed-reply, button-click, quick-reply). Clarified that event type doesn't determine behavior on its own; operator's handoff description does. Default-when-no-rule clarified.
+- Step 6 Debounce subsection. `new_button_clicked` events are processed immediately without debounce batching.
+- Step 7 smoke test. Button-click verification now tests the handoff rule path (or the default response path if no rule is configured), not a blanket skip.
+- Step 8 scenario 4 (Automation handoff). Updated to test that the agent evaluates each event against the handoff rule, not that it blindly skips all button clicks.
+- v1.3 callout at top replaced with v1.4 callout.
+
+### `playbook.md` updates
+
+- "Deciding Whether to Respond" step 1 rewritten. Old step 1 said `new_button_clicked` events always skip at this stage. New step 1 says log the event and let the handoff rule (step 5) decide.
+- "Automation Handoff" section rewritten. Removed the "always/never" framing about button taps. Agent now evaluates the handoff rule on every inbound event regardless of type. Added three example handoff descriptions. Default-when-no-rule behavior clarified as "respond to both event types." Uncertainty default flipped: previously "when in doubt, skip"; now "when in doubt, respond" (operator's intent is an active agent).
+
+### `integration-notes.md` updates
+
+- `new_button_clicked` event description rewritten. No longer says button clicks are "not a handoff moment" by default. Now says behavior depends on the operator's handoff rule, with respond-as-organic-message as the default when no rule is configured.
+- "Standard workflow: button-click events" rewritten. Button clicks now run through the same decision-to-respond logic as `new_message` events, with the automation handoff step being where the operator's rule decides.
+- Debounce section updated. Button clicks processed immediately without batching; automation handoff logic handles coordination with in-flight automations.
+
+**Parked for v1.5 or Module 6 extension.** A "wait-a-beat" debounce where the agent briefly waits after a button click to see if an automation's next step fires. More forgiving to operators who forgot to configure handoff. Adds stateful complexity to the runtime and is deferred until there's operator demand for it.
+
 ## April 21, 2026 (afternoon)
 
 ### `kickoff-prompt.md` v1.3
@@ -45,7 +74,7 @@ Launch-mode and webhook-coverage rework based on operator feedback and webhook-e
 
 - `new_button_clicked` now documented in the subscription list with its payload shape.
 - New "Event type payload shapes" section covering `new_message`, `new_story_reply`, `new_comment`, and `new_button_clicked`. Button taps and quick-reply taps have inverted `message_id` / `message_text` shapes — button taps have the label in `message_text` with empty `message_id`; quick-reply taps have populated `message_id` with empty `message_text`.
-- New "Standard workflow: button-click events" section. Button clicks are automation-flow signals, not agent response triggers.
+- New "Standard workflow: button-click events" section. Button clicks are automation-flow signals, not agent response triggers. *(Corrected in v1.4: button clicks are handoff candidates; handoff rule decides.)*
 - Debounce section notes that button clicks are not part of the debounce window for response purposes.
 - Standard DM workflow now includes an explicit step to run the playbook's decision-to-respond logic before generating a response.
 
@@ -55,8 +84,8 @@ Launch-mode and webhook-coverage rework based on operator feedback and webhook-e
 
 **Added.**
 
-- New "Deciding Whether to Respond" section with a 7-step ordered decision: event type, self-echo, autopilot mode, exclusion rules, automation handoff, fetch history, generate. Every skipped event must log a reason to the activity feed.
-- New "Automation Handoff" section defining the runtime logic for coordinating with DM automations. Operator describes the handoff in plain English; agent compares conversation history against that description on every `new_message` event. Button and quick-reply events are always automation-flow signals, never handoff moments.
+- New "Deciding Whether to Respond" section with a 7-step ordered decision: event type, self-echo, autopilot mode, exclusion rules, automation handoff, fetch history, generate. Every skipped event must log a reason to the activity feed. *(Step 1 corrected in v1.4.)*
+- New "Automation Handoff" section defining the runtime logic for coordinating with DM automations. Operator describes the handoff in plain English; agent compares conversation history against that description on every `new_message` event. Button and quick-reply events are always automation-flow signals, never handoff moments. *(Corrected in v1.4: handoff rule decides, not event type.)*
 
 ## April 20, 2026 (late evening)
 

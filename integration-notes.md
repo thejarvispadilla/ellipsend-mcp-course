@@ -51,7 +51,9 @@ Two variants with different payload shapes:
 - **Button tap.** `message_id` is empty string. `message_text` contains the button label (for example, `"Testing Button"`).
 - **Quick-reply tap.** `message_id` is populated. `message_text` is empty string.
 
-Either way, these events signal that the user is interacting with an in-progress DM automation (a flow that ends in a button prompt, a sequence that uses quick replies to guide the user through a tree). For automation handoff logic, treat `new_button_clicked` events as "user is still in the automation, not a handoff moment." See the playbook's Automation handoff section for the full rule.
+These events represent user interaction with a DM automation flow. Whether the agent should respond depends on the operator's configured automation handoff rule, not on the event type itself. A button tap can be the handoff moment if the operator described it that way ("when they tap the 'Tell me more' button, that's you"). It can also be mid-flow, where the automation is about to fire its next step and the agent should wait. See the playbook's "Automation Handoff" section for the decision logic.
+
+If no handoff rule is configured, the default is to treat button clicks as organic messages and respond. This may step on a running automation if one exists; configuring the handoff rule is how the operator prevents that.
 
 Don't key your message dedupe or flag tracking on `message_id` for button events. Empty string collisions across multiple button taps will break that logic. Use `event_id` from the top-level webhook payload instead, or a composite of `meta_contact_id + occurred_at` for button events specifically.
 
@@ -73,8 +75,10 @@ When a `new_button_clicked` webhook arrives:
 
 1. Receive the webhook payload (`message_type: "postback"`, either a button label or a quick-reply with populated `message_id`).
 2. Log the event so it shows in the activity feed and is visible in conversation history later.
-3. Check whether the operator configured automation handoff. If yes, treat this event as "user is still in the automation" and do not respond. The handoff moment is the subsequent organic `new_message` event, not this button tap.
-4. If the operator did not configure automation handoff (no automations in their setup), the event can still be recorded to history but should not trigger an agent response on its own. Button clicks are flow interactions, not DM questions.
+3. Read the contact via `ellipsend://contacts/{contact_id}` and conversation history via `ellipsend://contacts/{contact_id}/messages/{page}/{page_size}`.
+4. Run the playbook's decision-to-respond logic. At the automation handoff step: if the operator has a handoff rule configured, evaluate it against the current conversation state to decide whether this button click is the handoff moment. If yes, respond. If no (automation is still in flight, or the button click doesn't match the described handoff point), skip and log.
+5. If the operator has no handoff rule configured, the default is to treat the button click as an organic message and respond as normal. This may step on a running automation if one exists. The operator's job is to configure a handoff rule to prevent that.
+6. If responding, generate the response using the business config and send via `send_dm` or `send_dm_with_button`.
 
 ## Standard workflow: comment-triggered DMs
 
@@ -82,7 +86,7 @@ When a `new_comment` webhook arrives:
 
 1. Receive the webhook payload (comment text, `comment_id`, `post_id`, commenter metadata).
 2. Skip if you've already handled this `comment_id`. Track responded comment IDs.
-3. Read the post via `ellipsend://posts/{post_id}` to understand what the post is about.
+3. Read the post via `ellipsend://posts/{post_id}` to understand its topic and caption.
 4. Read the commenter's contact and any prior conversation history.
 5. Decide whether to respond based on the playbook rules.
 6. If responding, reply with `reply_to_comment_with_dm` or `reply_to_comment_with_dm_with_button`. These tools link the DM to the specific comment, which is required by Meta. Don't use regular `send_dm` for comment-triggered responses.
@@ -90,9 +94,9 @@ When a `new_comment` webhook arrives:
 
 ## Debounce
 
-When multiple messages arrive in quick succession, don't respond immediately. Wait for a 10-second silence window before processing. Then treat all new messages as one context and send one coherent reply. Without debounce, you'll reply mid-thought and miss context from the follow-up messages.
+When multiple `new_message` events arrive from a contact in quick succession, don't respond immediately. Wait for a 10-second silence window before processing. Then treat all new messages as one context and send one coherent reply. Without debounce, you'll reply mid-thought and miss context from the follow-up messages.
 
-Debounce applies to `new_message` events only. `new_button_clicked` events are automation-flow signals, not organic messages, so they don't accumulate in the debounce window for response purposes.
+Debounce applies to inbound `new_message` events only. `new_button_clicked` events are processed immediately, without batching. They typically arrive as discrete single interactions (one button tap at a time), and the automation handoff logic in the playbook handles coordination with any in-flight automation flows.
 
 Do not add a per-contact cooldown after sending. Older versions of this file included a 60-second cooldown. It caused real substantive follow-ups to get dropped. Debounce on incoming messages alone handles the rapid-fire case.
 
