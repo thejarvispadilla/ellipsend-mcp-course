@@ -2,6 +2,24 @@
 
 All notable changes to the files in this repo are logged here, newest first.
 
+## April 21, 2026 (evening)
+
+### `integration-notes.md` updates
+
+Saved-response surface added. Ellipsend shipped a saved-response library with two new send tools and one new resource. Coverage now in integration-notes.
+
+**Added.**
+
+- New "Saved responses" section. Covers the resource (`ellipsend://saved_responses`) and the two send tools (`send_saved_response` and `reply_to_comment_with_saved_response`). Documents the resource payload shape (`{id, shortcut, message_type}`), the portability rule (reference saved responses by `shortcut` in your configuration; `id` is tenant-scoped), observed `message_type` values (`text`, `button`, `audio`), the blind-pick constraint (the resource exposes no body text, so the agent picks by shortcut and trusts operator-approved content), the MIME quirk (JSON payload returned as `text/plain` inside `contents[0].text`), and Meta window behavior.
+- Standard workflow: DMs step 6 now lists `send_saved_response` as an alternative to `send_dm` and `send_dm_with_button` when the operator has a saved response configured.
+- Standard workflow: button-click events step 6 now lists `send_saved_response` alongside the freeform send tools.
+- Standard workflow: comment-triggered DMs step 6 now lists `reply_to_comment_with_saved_response` as an alternative to the freeform comment-to-DM tools.
+- Meta 24-hour messaging window section now names `send_saved_response` as subject to the same window as `send_dm`.
+- 7-day CTD window section now names `reply_to_comment_with_saved_response` as subject to the 7-day comment-to-DM window.
+- One DM per comment section now names `reply_to_comment_with_saved_response` as subject to Meta's one-DM-per-comment limit (subcode 2534023 on a second attempt).
+
+**Note on `kickoff-prompt.md`.** Unchanged. The MCP is self-describing, so the agent discovers these tools automatically on connection. Saved responses don't require upfront caching at setup (unlike `ellipsend://relationships`, which needs its ID mapping cached before `set_contact_relationship` can be called). The agent reads `ellipsend://saved_responses` when composing a reply and selects by shortcut as needed. No behavioral change to the setup flow.
+
 ## April 21, 2026 (late afternoon)
 
 ### `kickoff-prompt.md` v1.4

@@ -66,7 +66,7 @@ When a `new_message` or `new_story_reply` webhook arrives:
 3. Read conversation history via `ellipsend://contacts/{contact_id}/messages/{page}/{page_size}` for context.
 4. Check the playbook's decision-to-respond logic: exclusion rules, allowlist/exclude-list, automation handoff. If any of them say skip, log and stop.
 5. Decide how to respond based on the playbook and your business configuration.
-6. Reply with `send_dm` or `send_dm_with_button`.
+6. Reply with `send_dm` or `send_dm_with_button` for freeform content, or `send_saved_response` if the operator has a saved response configured for this situation. See the Saved responses section below.
 7. Update the contact's relationship or label with `set_contact_relationship` or `set_contact_label` if appropriate.
 
 ## Standard workflow: button-click events
@@ -78,7 +78,7 @@ When a `new_button_clicked` webhook arrives:
 3. Read the contact via `ellipsend://contacts/{contact_id}` and conversation history via `ellipsend://contacts/{contact_id}/messages/{page}/{page_size}`.
 4. Run the playbook's decision-to-respond logic. At the automation handoff step: if the operator has a handoff rule configured, evaluate it against the current conversation state to decide whether this button click is the handoff moment. If yes, respond. If no (automation is still in flight, or the button click doesn't match the described handoff point), skip and log.
 5. If the operator has no handoff rule configured, the default is to treat the button click as an organic message and respond as normal. This may step on a running automation if one exists. The operator's job is to configure a handoff rule to prevent that.
-6. If responding, generate the response using the business config and send via `send_dm` or `send_dm_with_button`.
+6. If responding, generate the response using the business config and send via `send_dm`, `send_dm_with_button`, or `send_saved_response`.
 
 ## Standard workflow: comment-triggered DMs
 
@@ -89,8 +89,40 @@ When a `new_comment` webhook arrives:
 3. Read the post via `ellipsend://posts/{post_id}` to understand its topic and caption.
 4. Read the commenter's contact and any prior conversation history.
 5. Decide whether to respond based on the playbook rules.
-6. If responding, reply with `reply_to_comment_with_dm` or `reply_to_comment_with_dm_with_button`. These tools link the DM to the specific comment, which is required by Meta. Don't use regular `send_dm` for comment-triggered responses.
+6. If responding, reply with `reply_to_comment_with_dm` or `reply_to_comment_with_dm_with_button` for freeform content, or `reply_to_comment_with_saved_response` if the operator has a saved response configured. These tools link the DM to the specific comment, which is required by Meta. Don't use regular `send_dm` for comment-triggered responses.
 7. Optionally call `send_public_comment_reply` to post a public reply to the comment as well.
+
+## Saved responses
+
+Ellipsend supports a saved-response library. The operator creates and approves saved responses inside the Ellipsend dashboard. Your agent reads the library and sends a saved response by id, either as a DM (`send_saved_response`) or as a comment-triggered DM (`reply_to_comment_with_saved_response`).
+
+### Reading the library
+
+Read `ellipsend://saved_responses` to list what's available. Each entry has exactly three fields:
+
+- `id` — integer. Tenant-scoped. The same saved response will have a different id in a different operator's account. Not portable across accounts.
+- `shortcut` — string. A short human-friendly handle set by the operator (for example, `"discord"`, `"beta"`, `"vmrespond"`). If your configuration refers to a specific saved response, reference it by shortcut, not by id.
+- `message_type` — string. Describes what the saved response sends. Observed values are `text` (plain DM body), `button` (body plus a CTA link, parallel to `send_dm_with_button`), and `audio` (a pre-recorded voice note). More types may exist; inspect the operator's library to see.
+
+The resource returns `mimeType: "text/plain"` with the JSON payload inside `contents[0].text`. Parse the text field explicitly; don't rely on the MIME type.
+
+### Sending a saved response
+
+The send tools take only a contact (or comment) identifier and a `saved_response_id`. They don't accept body overrides or variable substitutions from the agent. If the saved response is a template with placeholders, Ellipsend fills them server-side from stored defaults; your agent doesn't pass runtime variables.
+
+One universal dispatcher on each path. `send_saved_response` handles all `message_type` values (text, button, audio) through the same call. The server dispatches based on the stored type. You don't need to branch on type at the agent level. Same story for `reply_to_comment_with_saved_response` on the comment-to-DM path.
+
+### Blind-pick
+
+The resource exposes only `{id, shortcut, message_type}`. The body text, the link URL, the button label — none of these are visible to the agent before sending. Your agent picks a saved response by its `shortcut` and trusts that the operator has approved the content.
+
+Practical consequence: configuration that tells the agent "send the Discord invite" should reference the saved response by shortcut (for example, `shortcut == "discord"`). The agent sends that saved response and trusts the operator's approval of the body. If you want to verify a send landed, check the outbound in conversation history via `fetch_messages`.
+
+### 24-hour window and Meta limits
+
+`send_saved_response` is subject to the same Meta 24-hour messaging window as `send_dm` and `send_dm_with_button`. If the window is closed, the send fails at Ellipsend's server-side guardrail.
+
+`reply_to_comment_with_saved_response` uses the 7-day comment-to-DM window, same as the other comment-to-DM tools, and is governed by Meta's one-DM-per-comment limit (subcode 2534023 on a second attempt for the same comment).
 
 ## Debounce
 
@@ -106,13 +138,13 @@ Platform behaviors that look like bugs but trace back to Meta's API rules. Name 
 
 ### 24-hour messaging window
 
-Meta only allows a business to DM a contact via the standard Messaging API if the contact has messaged the business in the last 24 hours. Outside that window, `send_dm` and `send_dm_with_button` will fail.
+Meta only allows a business to DM a contact via the standard Messaging API if the contact has messaged the business in the last 24 hours. Outside that window, `send_dm`, `send_dm_with_button`, and `send_saved_response` will fail.
 
 Ellipsend's server-side guardrails block the call before it leaves the platform, so your Meta account stays protected from policy strikes. You'll see a clean error your agent can react to (flag for the operator, queue outreach via comment-to-DM when they next comment, etc.).
 
 ### 7-day CTD window
 
-Comment-to-DM tools (`reply_to_comment_with_dm`, `reply_to_comment_with_dm_with_button`) have a separate 7-day window. You can DM a commenter up to 7 days after they commented, even if the standard 24-hour messaging window with them is closed. This is what makes comment tools powerful for reactivation.
+Comment-to-DM tools (`reply_to_comment_with_dm`, `reply_to_comment_with_dm_with_button`, `reply_to_comment_with_saved_response`) have a separate 7-day window. You can DM a commenter up to 7 days after they commented, even if the standard 24-hour messaging window with them is closed. This is what makes comment tools powerful for reactivation.
 
 ### Self-echo
 
@@ -126,7 +158,7 @@ Meta occasionally returns a `400 Bad Request` on a send while actually deliverin
 
 ### One DM per comment
 
-Meta limits businesses to one DM per comment through the comment-to-DM tools. If your agent tries to DM the same commenter twice for the same `comment_id` via `reply_to_comment_with_dm` or `reply_to_comment_with_dm_with_button`, Meta returns error subcode 2534023 on the second attempt. Track which comment IDs you've already DM'd and skip them.
+Meta limits businesses to one DM per comment through the comment-to-DM tools. If your agent tries to DM the same commenter twice for the same `comment_id` via `reply_to_comment_with_dm`, `reply_to_comment_with_dm_with_button`, or `reply_to_comment_with_saved_response`, Meta returns error subcode 2534023 on the second attempt. Track which comment IDs you've already DM'd and skip them.
 
 Public replies are different. `send_public_comment_reply` has no per-comment limit. Without tracking, an agent will keep publicly replying to the same comment every time a new webhook event comes through for it. Track public replies the same way you track DMs.
 
