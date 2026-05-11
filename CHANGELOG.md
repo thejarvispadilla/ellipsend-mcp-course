@@ -2,6 +2,30 @@
 
 All notable changes to the files in this repo are logged here, newest first.
 
+## April 21, 2026 (late evening)
+
+### `kickoff-prompt.md` v1.5
+
+Added an opt-in subscription path for `message_sent_outbound`, a fifth webhook event that fires when DMs are sent FROM the business account (by the agent, by a teammate composing manually in Ellipsend's dashboard, or any other source).
+
+**Added.**
+
+- Step 3 now offers the opt-in question. After the four default events are introduced, the agent presents `message_sent_outbound` to the operator: what it does, the feedback-loop risk, the implications of subscribing. If the operator declines, the default 4-event subscription proceeds unchanged.
+- If the operator accepts, Step 3's numbered list now defers the subscription curl until after the safeguards are implemented. The agent: (1) sets up event-type routing at the top of the webhook handler with `message_sent_outbound` routed to a sync-only path that never invokes the agent, (2) adds a rate-limit circuit on the send path (50 sends in 2 minutes as a starting cap, flips autopilot to OFF and alerts if exceeded), (3) runs a synthetic test by POSTing a fake `message_sent_outbound` payload to the local handler and verifying the agent is never invoked, (4) issues the subscription curl with all 5 events only after the synthetic test passes.
+- Step 9's "Confirm to me" status template now includes an optional line for opted-in operators: "`message_sent_outbound` subscribed; outbound echo handler routes to sync-only path; rate-limit circuit is active."
+- v1.4 callout at the top replaced with v1.5 callout summarizing the opt-in addition and pointing to `integration-notes.md` for the safeguard pattern.
+
+**Framing.** The opt-in is presented as use-at-your-own-risk. Ellipsend ships the event reliably; the operator's handler is responsible for processing it correctly. The course documents the safeguard pattern. Subscribing means accepting the risk and implementing the safeguards.
+
+### `integration-notes.md` updates
+
+**Added.**
+
+- New "`message_sent_outbound` (opt-in)" section between "Saved responses" and "Debounce." Covers what the event is, why it's opt-in (the feedback-loop risk), payload shape with empirical observations (`origin` is uniformly `"agent"` across thousands of events regardless of source — cannot be used to distinguish human-from-agent; `trigger_agent` is uniformly `false` on this event; `direction: "outbound"` is the reliable marker), the minimum safeguard (event-type routing at the top of the webhook handler), storage approach (INSERT OR IGNORE on `message_id`, with optional pre-insert + content-and-time dedup for eager local state), the rate-limit circuit as catastrophic backstop, and the synthetic-test pattern before flipping the live subscription.
+- Webhook subscription section now mentions the optional fifth event with a pointer to the dedicated section.
+
+**Note on attribution.** The `origin` field in the webhook payload is empirically a constant. It says `"agent"` for every outbound regardless of who actually sent the message — the operator's agent, a human composer, any other path. Documentation now explicitly tells students NOT to branch on `origin` to distinguish human-from-agent sends. If they need that distinction for UI purposes, they have to tag a `sender_source` field at their own send paths, not derive it from the payload.
+
 ## April 21, 2026 (evening)
 
 ### `integration-notes.md` updates

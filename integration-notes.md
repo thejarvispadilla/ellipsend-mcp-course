@@ -21,6 +21,8 @@ Subscribe to all four event types:
 - `new_comment` — comments on your posts.
 - `new_button_clicked` — quick-reply taps and message-button clicks. Without this, your agent is deaf to button interactions.
 
+There's a fifth, optional event: `message_sent_outbound`. Off by default. Has a real feedback-loop risk if mishandled. See the dedicated section below before subscribing.
+
 Full subscription curl example lives in the kickoff prompt, Step 3.
 
 ### Webhook security
@@ -123,6 +125,92 @@ Practical consequence: configuration that tells the agent "send the Discord invi
 `send_saved_response` is subject to the same Meta 24-hour messaging window as `send_dm` and `send_dm_with_button`. If the window is closed, the send fails at Ellipsend's server-side guardrail.
 
 `reply_to_comment_with_saved_response` uses the 7-day comment-to-DM window, same as the other comment-to-DM tools, and is governed by Meta's one-DM-per-comment limit (subcode 2534023 on a second attempt for the same comment).
+
+## `message_sent_outbound` (opt-in)
+
+Ellipsend offers a fifth webhook event called `message_sent_outbound`. It fires every time a DM is sent FROM the business account, regardless of source — your agent, a teammate composing manually in Ellipsend's dashboard, any other path. The use case is keeping your agent's local message history in sync when humans send manual replies. Without this event, your agent doesn't see those messages and loses context.
+
+The event is opt-in because subscribing without a specific safeguard pattern creates a feedback loop. If your handler treats `message_sent_outbound` as something to respond to, your agent replies, the reply fires another `message_sent_outbound`, your agent replies again, and you're in a spam loop until you cut it off. Spammed contacts, burned tokens, real reputational damage.
+
+Off by default. Subscribe only after implementing the safeguards below and testing them. The kickoff prompt's Step 3 surfaces the opt-in question and walks the agent through the setup.
+
+**Use at your own risk.** Ellipsend ships the event reliably; your handler is responsible for processing it correctly. The course documents the safeguard pattern. Your implementation owns the loop prevention.
+
+### Payload shape
+
+Same envelope as `new_message`. The notable fields:
+
+- `direction: "outbound"` — the reliable marker that this is a business-side send.
+- `origin: "agent"` — this is a constant. Empirically observed across thousands of events: every outbound carries `origin: "agent"` regardless of who actually sent the message. Don't write logic that branches on `origin` to distinguish human-from-agent. The field doesn't carry that signal.
+- `trigger_agent: false` — also a constant on this event. Belt-and-suspenders flag from Ellipsend saying "this event should not invoke your agent."
+- `sender_id` — always your business Meta ID for outbounds.
+- `message_id` — Meta's platform-issued message ID. Use this as your dedup key.
+- `message_text` — the message body.
+
+### The minimum safeguard: route by event_type
+
+Branch at the top of your webhook handler. `message_sent_outbound` goes to a code path that does NOT invoke your agent. Pseudocode:
+
+```
+function handleWebhook(event) {
+  if (event.event_type === "message_sent_outbound") {
+    return handleOutboundEcho(event);   // sync-only, never calls agent
+  }
+  return handleInboundEvent(event);     // your normal AI-trigger path
+}
+```
+
+This is the floor. Without this, the loop is mechanically possible.
+
+The `handleOutboundEcho` function writes the message to your local DB and exits. It does not call your agent, look up the contact, run the playbook, or do anything that could lead to a response generation.
+
+### Storage approach
+
+When `message_sent_outbound` lands, write the message to your local messages table as an outbound row. Use `message_id` as a unique key with INSERT OR IGNORE semantics so re-deliveries from Ellipsend don't duplicate. Mark `direction = "outbound"` on the row.
+
+For attribution, if you want to distinguish your agent's own sends from manual or other sends for UI purposes, tag a `sender_source` field at YOUR own send path. When your agent calls `send_dm` (or any send tool), pre-insert the outbound row in your local DB with `sender_source = "agent"` immediately. When the echo arrives later, your INSERT OR IGNORE on `message_id` will dedup. The agent's pre-insert won't have a `message_id` yet (Meta hasn't issued it), so you can either: (a) leave both rows and rely on UI logic to display one per Meta-issued message, or (b) write content+time dedup that stamps the echo's `message_id` onto your pre-inserted row when bodies match within a short window. Option (b) is cleaner but more complex.
+
+The simpler pattern for students who don't need eager local state: don't pre-insert on send. Wait for the echo to arrive, then write the row. Your local DB has a brief lag (a few seconds typically) between when you send and when your DB reflects it.
+
+The webhook's `origin` field is always `"agent"`. It cannot be used to distinguish source. If you need that distinction, you must tag it at your send paths, not derive it from the payload.
+
+### Rate-limit circuit (catastrophic backstop)
+
+Even with correct routing, a bug somewhere could create a loop. Add a rate limit on your agent's send path: cap at N sends in M minutes. If exceeded, flip autopilot to OFF and alert yourself (Discord webhook, email, whatever you check).
+
+A reasonable starting cap for a low-volume operator is 50 sends in 2 minutes. Higher-volume operators (managing comment-to-DM flows for viral posts) can raise the cap, but the protective floor stays the same. The cap should reflect "noticeably above normal traffic, but well below loop territory."
+
+This is your last line of defense. If everything else fails, the rate limit catches it.
+
+### Test before subscribing live
+
+Don't add `message_sent_outbound` to your live webhook subscription until you've verified the routing with a synthetic event. POST a fake payload to your local handler:
+
+```bash
+curl -X POST http://localhost:{PORT}/api/webhook \
+  -H "Content-Type: application/json" \
+  -H "x-webhook-event: message_sent_outbound" \
+  -d '{
+    "event_type": "message_sent_outbound",
+    "data": {
+      "direction": "outbound",
+      "origin": "agent",
+      "trigger_agent": false,
+      "sender_id": "YOUR_BUSINESS_META_ID",
+      "meta_contact_id": "TEST_CONTACT_ID",
+      "message_id": "synthetic_test_001",
+      "message_text": "synthetic loop-prevention test"
+    }
+  }'
+```
+
+Verify three things:
+
+1. The event routes to your echo handler, not your AI-trigger handler.
+2. Your agent is never invoked. No tokens spent, no MCP calls fired.
+3. The message lands in your local DB with the correct outbound marker.
+
+Only after this passes should you add `message_sent_outbound` to your live subscription.
 
 ## Debounce
 

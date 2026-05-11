@@ -1,10 +1,10 @@
-# Ellipsend AI Agent Setup. Kickoff Prompt v1.4
+# Ellipsend AI Agent Setup. Kickoff Prompt v1.5
 
 *One-shot setup for your Ellipsend-connected DM agent. Paste this into Claude Code, OpenClaw, Codex, or any AI tool that supports MCP and agentic execution. Run once. After setup, your tool loads `playbook.md` at the start of every session.*
 
 *Version history lives in `CHANGELOG.md`.*
 
-> 🆕 **New in v1.4.** Button-click handling corrected. `new_button_clicked` events are handoff candidates, same as `new_message` events. The operator's handoff rule decides whether to respond, not the event type. Default when no handoff rule is configured: respond to both event types. Full diff in [`CHANGELOG.md`](CHANGELOG.md).
+> 🆕 **New in v1.5.** Step 3 now offers an optional opt-in subscription to `message_sent_outbound`, a fifth webhook event that fires when DMs are sent FROM the business account. Useful for keeping the agent in sync when humans send manual replies. Off by default because subscribing without specific safeguards creates a feedback-loop risk. Safeguard pattern lives in [`integration-notes.md`](integration-notes.md). Full diff in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
@@ -49,16 +49,16 @@ Ask me for my Ellipsend MCP server URL and API key. I'll grab these from **Setti
 
 ## Step 3: Set Up the Public Webhook Endpoint
 
-Ellipsend delivers four event types via webhook:
+Ellipsend delivers four event types via webhook by default:
 
 - `new_message` — organic typed DMs.
 - `new_story_reply` — replies to your Instagram stories.
 - `new_comment` — comments on your posts.
 - `new_button_clicked` — when a contact taps a quick-reply or message button. Delivered with `message_type: "postback"`. Without this subscription, your agent is deaf to button interactions, which matters heavily if you run DM automations.
 
-Your agent needs a public URL to receive them.
+There's a fifth, optional event: `message_sent_outbound`. It fires when a DM is sent FROM your business account, by anyone (your agent, a teammate composing manually in Ellipsend's dashboard, or any other source). I'll surface the opt-in below.
 
-Full infrastructure instructions (Cloudflare Tunnel, Railway, Fly.io, VPS) live in Module 1 of the Ellipsend MCP Course. I should have completed that setup already. If I haven't, pause here and point me back to the course.
+Your agent needs a public URL to receive these events. Full infrastructure instructions (Cloudflare Tunnel, Railway, Fly.io, VPS) live in Module 1 of the Ellipsend MCP Course. I should have completed that setup already. If I haven't, pause here and point me back to the course.
 
 Once I have a public URL:
 
@@ -68,7 +68,23 @@ Once I have a public URL:
    openssl rand -hex 32
    ```
 
-2. **Subscribe to the webhooks.**
+2. **Decide on the optional `message_sent_outbound` subscription.**
+
+   Ask me directly:
+
+   > There's an optional fifth webhook event called `message_sent_outbound`. It fires every time a DM is sent FROM your business account, by you, your agent, or a teammate composing manually in Ellipsend's dashboard. The use case is keeping me in sync when humans send manual replies, so I don't lose context.
+   >
+   > It carries a real feedback-loop risk: if my handler treats this event as something to respond to, I'll reply to my own messages indefinitely. Spammed contacts, burned tokens. The course's `integration-notes.md` has the safeguard pattern I'll implement if you opt in.
+   >
+   > Do you want me to subscribe to this event?
+
+   If they decline, proceed with the default 4 events. Skip the safeguard work in step 6 below.
+
+   If they accept, you must implement the safeguards described in `integration-notes.md` under "`message_sent_outbound` (opt-in)" BEFORE adding the event to your live subscription. Tell them: "I'll set up the safeguards now and run a synthetic test before flipping the live subscription. Continuing."
+
+3. **Subscribe to the webhooks.**
+
+   Use the default 4-event subscription if they declined the opt-in:
 
    ```bash
    curl --location 'https://webhook.ellipsend.com/subscriptions' \
@@ -81,13 +97,62 @@ Once I have a public URL:
    }'
    ```
 
-3. **Verify the secret on every incoming POST.** If the secret in the payload doesn't match the one you registered, reject the request with 401. This blocks anything that isn't Ellipsend.
+   If they accepted the opt-in, defer the subscription curl until after step 6 below (you'll subscribe with all 5 events as part of the safeguard test). For now, set up just the secret and the handler structure.
 
-4. **Filter self-echoes.** When you post a public comment reply, Instagram delivers that reply back through the webhook as a `new_comment` event. Drop any webhook where `sender_id` or `meta_contact_id` matches my Meta business ID. Store my business Meta ID in `.env` as `BUSINESS_META_ID` and filter at the handler.
+4. **Verify the secret on every incoming POST.** If the secret in the payload doesn't match the one you registered, reject the request with 401. This blocks anything that isn't Ellipsend.
 
-5. **Route all four event types.** Your webhook handler needs a branch for each of `new_message`, `new_story_reply`, `new_comment`, and `new_button_clicked`. See `integration-notes.md` for the payload shape of `new_button_clicked` and how button taps differ from organic messages. Unhandled event types should be logged but not silently dropped.
+5. **Filter self-echoes.** When you post a public comment reply, Instagram delivers that reply back through the webhook as a `new_comment` event. Drop any webhook where `sender_id` or `meta_contact_id` matches my Meta business ID. Store my business Meta ID in `.env` as `BUSINESS_META_ID` and filter at the handler.
 
-6. **Test the subscription.** Ask me to send a test DM to my business account. Confirm the event lands in your server logs. Diagnose if it doesn't, before moving on.
+6. **Route event types.** Your webhook handler needs a branch for each subscribed event type.
+
+   - For the default 4 events (`new_message`, `new_story_reply`, `new_comment`, `new_button_clicked`), route to your AI-trigger path. See `integration-notes.md` for payload shape details.
+   - **If you opted into `message_sent_outbound`,** add a dedicated branch at the TOP of your handler that routes this event type to a sync-only path that does NOT invoke me. The sync handler writes the outbound message to your local DB (use `message_id` as a unique key with INSERT OR IGNORE semantics) and exits. It does not call me, look up the contact, run the playbook, or do anything that could trigger a response. Add a rate limit on your agent's send path: cap at 50 sends in 2 minutes; if exceeded, flip autopilot to OFF and alert. The full safeguard pattern lives in `integration-notes.md` under "`message_sent_outbound` (opt-in)."
+
+   Unhandled event types should be logged but not silently dropped.
+
+7. **If opted-in: synthetic test before flipping the live subscription.**
+
+   POST a synthetic `message_sent_outbound` payload to your local handler:
+
+   ```bash
+   curl -X POST http://localhost:{PORT}/api/webhook \
+     -H "Content-Type: application/json" \
+     -d '{
+       "event_type": "message_sent_outbound",
+       "data": {
+         "direction": "outbound",
+         "origin": "agent",
+         "trigger_agent": false,
+         "sender_id": "{BUSINESS_META_ID}",
+         "meta_contact_id": "TEST_CONTACT_ID",
+         "message_id": "synthetic_test_001",
+         "message_text": "synthetic loop-prevention test"
+       }
+     }'
+   ```
+
+   Verify three things:
+
+   1. The event routes to your sync-only handler, not your AI-trigger handler.
+   2. I am never invoked. No tokens spent, no MCP calls fired.
+   3. The message lands in the local DB as an outbound row.
+
+   If all three pass, NOW issue the subscription curl with all 5 events:
+
+   ```bash
+   curl --location 'https://webhook.ellipsend.com/subscriptions' \
+   --header 'Content-Type: application/json' \
+   --header 'x-api-key: {ELLIPSEND_API_KEY}' \
+   --data '{
+     "event_types": ["new_message", "new_story_reply", "new_comment", "new_button_clicked", "message_sent_outbound"],
+     "target_url": "https://{PUBLIC_URL}/api/webhook",
+     "secret": "{WEBHOOK_SECRET}"
+   }'
+   ```
+
+   If the synthetic test fails, fix the routing before subscribing. Do not flip the live subscription with broken safeguards.
+
+8. **Test the subscription.** Ask me to send a test DM to my business account. Confirm the event lands in your server logs. Diagnose if it doesn't, before moving on.
 
 ## Step 4: Keep Your Agent Alive
 
@@ -356,6 +421,7 @@ Confirm to me:
 > - Autopilot is ON. Agent handles every contact except the exclude list and exclusion rules.
 > - Exclude list has [N] contacts. Exclusion rules: [brief summary].
 > - [If applicable] Automation handoff configured: [summary].
+> - [If applicable] `message_sent_outbound` subscribed; outbound echo handler routes to sync-only path; rate-limit circuit is active.
 > - Dashboard is at [local URL or Tailnet URL].
 > - Flag lifecycle is active.
 > - Rating loop is running.
